@@ -1,0 +1,6 @@
+# deployment
+.aws-sam
+dist/
+
+# python
+venv
