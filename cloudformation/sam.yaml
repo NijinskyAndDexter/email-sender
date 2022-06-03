@@ -1,0 +1,80 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Email Sender
+
+Parameters: 
+  stackEnvironment: 
+    Type: String
+    Default: dev
+    Description: 'the environment of this stack'
+  emailAddress: 
+    Type: String
+    Description: 'email address to send SNS messages to, passed in as var in deployment step'
+
+Resources:
+  SnsTopicForEmailPush: 
+    Type: AWS::SNS::Topic
+    Properties: 
+      TopicName: !Sub 'email-push-sns-topic-${stackEnvironment}'
+      Subscription: 
+        - Endpoint: !Sub ${emailAddress}
+          Protocol: 'email'
+
+  SnsTopicForEmailPushPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties: 
+      PolicyDocument: 
+        Id: MyTopicPolicy
+        Version: '2012-10-17'
+        Statement:
+        - Sid: sns-policy
+          Effect: Allow
+          Principal:
+            AWS: [!Ref AWS::AccountId]
+          Action: sns:Publish
+          Resource: !Ref SnsTopicForEmailPush
+      Topics: 
+        - !Ref SnsTopicForEmailPush
+
+  RestApi: 
+    Type: AWS::Serverless::Api
+    Properties: 
+      Description: RestApi to serve the email-sender SNS topic
+      EndpointConfiguration: 
+        Type: "EDGE"
+      StageName: api
+      Name: !Sub email-sender-rest-api-${stackEnvironment}
+
+  RestApiFunction: 
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../functions/email_sender
+      Environment: 
+        Variables: 
+          LOG_LEVEL: INFO
+          POWERTOOLS_SERVICE_NAME: !Sub ${AWS::StackName}
+          SNS_TOPIC_ARN: !Ref SnsTopicForEmailPush
+      Events: # needs permish to publish to sns topic
+        ApiEvent:
+          Type: Api
+          Properties:
+            Path: /{proxy+} # Send requests on any path to the lambda function
+            Method: ANY 
+            RestApiId: 
+              Ref: RestApi
+      Handler: email_sender.lambda_handler
+      MemorySize: 128 # lol NTS this is so low but I am cheap and this is not doing anything special, plus it's not like the user needs to wait for it to go thru
+      Runtime: python3.9
+      Timeout: 900
+      Policies:
+        Statement:
+          - Effect: Allow
+            Action:
+            - sns:Publish
+            Resource: !Ref SnsTopicForEmailPush
+          - Effect: Allow
+            Action: 
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*"
